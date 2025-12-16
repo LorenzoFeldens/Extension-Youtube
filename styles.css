@@ -1,0 +1,73 @@
+.yt-playlist-button-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0 0 4px 0;
+}
+
+.yt-playlist-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px 6px;
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 700;
+  border-radius: 6px;
+  border: 1px solid rgba(0,0,0,0.25);
+  color: #000;
+  cursor: pointer;
+  user-select: none;
+}
+
+.yt-playlist-button:hover { filter: brightness(0.95); }
+
+/* Toast */
+.yt-pl-toast {
+  position: fixed;
+  z-index: 999999;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  background: rgba(20,20,20,0.95);
+  color: #fff;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 13px;
+  box-shadow: 0 8px 20px rgba(0,0,0,0.35);
+  max-width: 80vw;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 120ms ease-in;
+}
+.yt-pl-toast.show { opacity: 1; }
+
+.yt-pl-remove-shortcut-btn {
+  background-color: #ffffff00;
+  cursor: pointer;
+  border: 0;
+  fill: #f1f1f1
+}
+
+
+/* Playlist page: shortcut remove button (opens 3-dots menu and clicks Remove) */
+/*.yt-pl-remove-shortcut-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  margin-right: 6px;
+  border-radius: 30px;
+  border: 1px solid rgba(241,241,241,0.5);
+  background: rgba(247, 100, 100, 0.5);
+  cursor: pointer;
+}
+.yt-pl-remove-shortcut-btn:hover { background: rgba(255, 0, 0, 0.5); }
+
+.yt-pl-remove-shortcut-btn svg {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+  color: var(--yt-spec-text-primary, #fff);
+}*/
