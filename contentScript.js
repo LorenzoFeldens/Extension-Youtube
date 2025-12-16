@@ -81,8 +81,9 @@ function findVideoIdForTitle(el) {
   return null;
 }
 
-async function addButtonsAboveTitle(titleElement, videoId) {
-  if (!videoId) return;
+async function addButtonsAboveTitle(titleElement) {
+  // NOTE: YouTube is a SPA and reuses DOM nodes on search/navigation.
+  // Do NOT capture videoId at injection time; compute it at click time.
   if (titleElement.dataset.ytPlaylistButtonInjected === "true") return;
 
   titleElement.dataset.ytPlaylistButtonInjected = "true";
@@ -103,6 +104,13 @@ async function addButtonsAboveTitle(titleElement, videoId) {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
       e.preventDefault();
+
+      // Re-resolve the videoId right now (fixes stale ids after search results change)
+      const videoId = findVideoIdForTitle(titleElement);
+      if (!videoId) {
+        alert("Could not determine video ID for this item.");
+        return;
+      }
 
       chrome.runtime.sendMessage(
         { type: "ADD_TO_PLAYLIST", videoId, playlistId: item.playlistId },
@@ -134,8 +142,7 @@ function processTitles() {
     document.querySelectorAll(sel).forEach((el) => {
       if (seen.has(el)) return;
       seen.add(el);
-      const videoId = findVideoIdForTitle(el);
-      addButtonsAboveTitle(el, videoId);
+      addButtonsAboveTitle(el);
     });
   });
 }
