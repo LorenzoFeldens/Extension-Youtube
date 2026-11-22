@@ -1,8 +1,14 @@
 {
   "manifest_version": 3,
-  "name": "YouTube Playlist Button",
+  "name": "Playlist Buttons for YouTube",
   "version": "1.2.0",
-  "description": "Adds configurable buttons above YouTube video titles to add videos to specific playlists via YouTube API.",
+  "description": "One-click buttons on YouTube thumbnails that add videos to your playlists. Pick the label, color and playlist for each button.",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
   "permissions": [
     "storage",
     "identity"
@@ -16,7 +22,11 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "YouTube Playlist Button"
+    "default_title": "Playlist Buttons for YouTube",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png"
+    }
   },
   "content_scripts": [
     {
@@ -27,10 +37,9 @@
     }
   ],
   "oauth2": {
-    "client_id": "140945427881-1hg3v72793j6qpcc35d2bb4uboogc4l1.apps.googleusercontent.com",
+    "client_id": "318626823282-9r0acn99iecussn52jter74vhne7ks87.apps.googleusercontent.com",
     "scopes": [
-      "https://www.googleapis.com/auth/youtube",
-      "https://www.googleapis.com/auth/youtube.force-ssl"
+      "https://www.googleapis.com/auth/youtube"
     ]
   }
 }
