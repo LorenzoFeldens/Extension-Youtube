@@ -1,10 +1,6 @@
-function getApiKey() {
-  //const manifest = chrome.runtime.getManifest();
-  //return manifest.ytApiKey || "";
-  return "REMOVED_API_KEY";
-}
+const API_BASE = "https://www.googleapis.com/youtube/v3";
 
-function getAccessTokenInteractive() {
+function getAccessToken() {
   return new Promise((resolve, reject) => {
     chrome.identity.getAuthToken({ interactive: true }, (token) => {
       if (chrome.runtime.lastError) {
@@ -20,22 +16,46 @@ function getAccessTokenInteractive() {
   });
 }
 
-async function ytFetch(url, accessToken, options = {}) {
-  const headers = new Headers(options.headers || {});
-  headers.set("Authorization", "Bearer " + accessToken);
-  if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
-  return fetch(url, { ...options, headers });
+function removeCachedToken(token) {
+  return new Promise((resolve) => chrome.identity.removeCachedAuthToken({ token }, resolve));
+}
+
+// Authorized fetch. On 401 (expired/revoked token) drops the cached token and retries once.
+async function ytFetch(url, options = {}) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const token = await getAccessToken();
+    const headers = new Headers(options.headers || {});
+    headers.set("Authorization", "Bearer " + token);
+    if (options.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+
+    const res = await fetch(url, { ...options, headers });
+    if (res.status === 401 && attempt === 0) {
+      await removeCachedToken(token);
+      continue;
+    }
+    if (!res.ok) throw new Error("YouTube API error (" + res.status + "): " + (await res.text()));
+    return res;
+  }
+}
+
+// Returns the playlistItemId if the video is already in the playlist, else null (one API call).
+async function findPlaylistItemId(videoId, playlistId) {
+  const url = new URL(API_BASE + "/playlistItems");
+  url.searchParams.set("part", "id");
+  url.searchParams.set("playlistId", playlistId);
+  url.searchParams.set("videoId", videoId);
+  url.searchParams.set("maxResults", "1");
+
+  const data = await (await ytFetch(url.toString())).json();
+  return data?.items?.[0]?.id || null;
 }
 
 async function addVideoToPlaylist(videoId, playlistId) {
-  const apiKey = getApiKey();
-  if (!apiKey) throw new Error("API key is not configured. Set ytApiKey in manifest.json.");
   if (!playlistId) throw new Error("Playlist ID is missing.");
 
-  const accessToken = await getAccessTokenInteractive();
-  const url =
-    "https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&key=" +
-    encodeURIComponent(apiKey);
+  if (await findPlaylistItemId(videoId, playlistId)) {
+    return { alreadyInPlaylist: true };
+  }
 
   const body = {
     snippet: {
@@ -43,60 +63,8 @@ async function addVideoToPlaylist(videoId, playlistId) {
       resourceId: { kind: "youtube#video", videoId }
     }
   };
-
-  const res = await ytFetch(url, accessToken, { method: "POST", body: JSON.stringify(body) });
-  if (!res.ok) throw new Error("YouTube API error (" + res.status + "): " + (await res.text()));
-  return res.json();
-}
-
-// Find playlistItemId for (playlistId, videoId) by paging through playlist items
-async function findPlaylistItemId(videoId, playlistId) {
-  const apiKey = getApiKey();
-  if (!apiKey) throw new Error("API key is not configured. Set ytApiKey in manifest.json.");
-  const accessToken = await getAccessTokenInteractive();
-
-  let pageToken = "";
-  for (let i = 0; i < 50; i++) { // safety cap
-    const url = new URL("https://www.googleapis.com/youtube/v3/playlistItems");
-    url.searchParams.set("part", "contentDetails");
-    url.searchParams.set("maxResults", "50");
-    url.searchParams.set("playlistId", playlistId);
-    url.searchParams.set("key", apiKey);
-    if (pageToken) url.searchParams.set("pageToken", pageToken);
-
-    const res = await ytFetch(url.toString(), accessToken, { method: "GET", headers: { "Content-Type": "application/json" } });
-    if (!res.ok) throw new Error("YouTube API error (" + res.status + "): " + (await res.text()));
-    const data = await res.json();
-
-    const items = Array.isArray(data.items) ? data.items : [];
-    for (const it of items) {
-      const v = it?.contentDetails?.videoId;
-      if (v === videoId) return it.id; // playlistItemId
-    }
-
-    pageToken = data.nextPageToken || "";
-    if (!pageToken) break;
-  }
-
-  return null;
-}
-
-async function removeVideoFromPlaylist(videoId, playlistId) {
-  const apiKey = getApiKey();
-  if (!apiKey) throw new Error("API key is not configured. Set ytApiKey in manifest.json.");
-  if (!playlistId) throw new Error("Playlist ID is missing.");
-
-  const accessToken = await getAccessTokenInteractive();
-  const playlistItemId = await findPlaylistItemId(videoId, playlistId);
-  if (!playlistItemId) throw new Error("Could not find this video in the playlist (no playlistItemId found)."+playlistId+" = "+videoId);
-
-  const url = new URL("https://www.googleapis.com/youtube/v3/playlistItems");
-  url.searchParams.set("id", playlistItemId);
-  url.searchParams.set("key", apiKey);
-
-  const res = await ytFetch(url.toString(), accessToken, { method: "DELETE", headers: { "Content-Type": "application/json" } });
-  if (!res.ok) throw new Error("YouTube API error (" + res.status + "): " + (await res.text()));
-  return true;
+  await ytFetch(API_BASE + "/playlistItems?part=snippet", { method: "POST", body: JSON.stringify(body) });
+  return { alreadyInPlaylist: false };
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -104,22 +72,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     (async () => {
       try {
         const result = await addVideoToPlaylist(message.videoId, message.playlistId);
-        sendResponse({ success: true, result });
+        sendResponse({ success: true, ...result });
       } catch (err) {
         console.error("Error adding video to playlist:", err);
-        sendResponse({ success: false, error: String(err) });
-      }
-    })();
-    return true;
-  }
-
-  if (message?.type === "REMOVE_FROM_PLAYLIST" && message.videoId && message.playlistId) {
-    (async () => {
-      try {
-        await removeVideoFromPlaylist(message.videoId, message.playlistId);
-        sendResponse({ success: true });
-      } catch (err) {
-        console.error("Error removing video from playlist:", err);
         sendResponse({ success: false, error: String(err) });
       }
     })();

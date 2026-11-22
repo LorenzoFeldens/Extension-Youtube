@@ -1,5 +1,8 @@
 const STORAGE_KEY = "ytPlaylists";
 const LEGACY_KEY = "ytPlaylistId";
+const ENABLED_KEY = "ytButtonsEnabled";
+
+let items = [];
 
 function defaultItem() {
   return { text: "", color: "#ffffff", playlistId: "" };
@@ -19,7 +22,7 @@ function escapeHtml(str) {
     .replaceAll("'", "&#039;");
 }
 
-function renderList(items) {
+function renderList() {
   const listEl = document.getElementById("list");
   listEl.innerHTML = "";
 
@@ -30,19 +33,19 @@ function renderList(items) {
 
     row.innerHTML = `
       <div>
-        <input type="color" class="colorInput" value="${item.color || "#282828"}" />
+        <input type="color" class="colorInput" title="Button colour" aria-label="Button colour" value="${escapeHtml(item.color || "#ffffff")}" />
       </div>
 
       <div>
-        <input type="text" class="textInput" value="${escapeHtml(item.text || "")}" placeholder="Text" oninput="this.title=this.value" onmouseenter="this.title=this.value" />
+        <input type="text" class="textInput" value="${escapeHtml(item.text || "")}" placeholder="Label" aria-label="Button label" />
       </div>
       
-      <div>
-        <input type="text" class="playlistInput" value="${escapeHtml(item.playlistId || "")}" placeholder="PL..." oninput="this.title=this.value" onmouseenter="this.title=this.value" />
+      <div class="grow">
+        <input type="text" class="playlistInput" value="${escapeHtml(item.playlistId || "")}" placeholder="Playlist ID (PL…)" aria-label="Playlist ID" spellcheck="false" />
       </div>
 
       <div>
-        <button type="button" class="removeBtn">
+        <button type="button" class="removeBtn" title="Remove" aria-label="Remove button">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M9 3h6l1 2h5v2H3V5h5l1-2zm1 6h2v10h-2V9zm4 0h2v10h-2V9zM7 9h2v10H7V9z"/>
           </svg>
@@ -51,9 +54,11 @@ function renderList(items) {
     `;
 
     row.querySelector(".removeBtn").addEventListener("click", () => {
+      items = readListFromDOM(); // keep unsaved edits
       items.splice(idx, 1);
       if (items.length === 0) items.push(defaultItem());
-      renderList(items);
+      renderList();
+      saveNow();
     });
 
     const text = row.querySelector('input[type="text"].textInput');
@@ -80,7 +85,7 @@ function readListFromDOM() {
 
   const items = rows.map((row) => {
     const text = clampString(row.querySelector(".textInput")?.value ?? "");
-    const color = row.querySelector(".colorInput")?.value ?? "#282828";
+    const color = row.querySelector(".colorInput")?.value ?? "#ffffff";
     const playlistId = (row.querySelector(".playlistInput")?.value ?? "").trim();
     return { text: text, color, playlistId };
   });
@@ -100,7 +105,7 @@ function load() {
         return;
       }
       if (data[LEGACY_KEY]) {
-        resolve([{ text: "", color: "#282828", playlistId: data[LEGACY_KEY] }]);
+        resolve([{ ...defaultItem(), playlistId: data[LEGACY_KEY] }]);
         return;
       }
       resolve([defaultItem()]);
@@ -111,21 +116,56 @@ function load() {
 function setStatus(msg) {
   const el = document.getElementById("status");
   el.textContent = msg || "";
-  if (msg) setTimeout(() => (el.textContent = ""), 2000);
+  clearTimeout(setStatus._t);
+  if (msg) setStatus._t = setTimeout(() => (el.textContent = ""), 1500);
+}
+
+// Auto-save: debounced while typing (keeps under chrome.storage.sync write limits
+// and avoids rebuilding YouTube buttons on every keystroke), immediate on change/remove.
+let saveTimer = null;
+async function saveNow() {
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  items = readListFromDOM();
+  await save(items);
+  setStatus("Saved.");
+}
+function scheduleSave() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveNow, 400);
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
-  let items = await load();
-  renderList(items);
+  items = await load();
+  renderList();
 
-  document.getElementById("addBtn").addEventListener("click", () => {
-    items.push(defaultItem());
-    renderList(items);
+  // On/off switch: saved immediately, applied live on open YouTube tabs
+  const toggle = document.getElementById("enabledToggle");
+  const showEnabled = (on) => {
+    toggle.checked = on;
+    document.body.classList.toggle("buttons-off", !on);
+    document.getElementById("enabledSub").textContent = on
+      ? "Buttons are visible on thumbnails"
+      : "Buttons are hidden";
+  };
+  chrome.storage.sync.get([ENABLED_KEY], (data) => showEnabled(data[ENABLED_KEY] !== false));
+  toggle.addEventListener("change", () => {
+    showEnabled(toggle.checked);
+    chrome.storage.sync.set({ [ENABLED_KEY]: toggle.checked }, () => setStatus(toggle.checked ? "Buttons on." : "Buttons off."));
   });
 
-  document.getElementById("saveBtn").addEventListener("click", async () => {
-    items = readListFromDOM();
-    await save(items);
-    setStatus("Saved.");
+  document.getElementById("addBtn").addEventListener("click", () => {
+    items = readListFromDOM(); // keep unsaved edits
+    items.push(defaultItem());
+    renderList();
+  });
+
+  const listEl = document.getElementById("list");
+  listEl.addEventListener("input", scheduleSave);
+  listEl.addEventListener("change", saveNow);
+
+  // Flush a pending save if the popup is closed mid-typing
+  window.addEventListener("pagehide", () => {
+    if (saveTimer) saveNow();
   });
 });

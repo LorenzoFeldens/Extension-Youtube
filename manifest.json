@@ -1,12 +1,10 @@
 {
   "manifest_version": 3,
   "name": "YouTube Playlist Button",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Adds configurable buttons above YouTube video titles to add videos to specific playlists via YouTube API.",
   "permissions": [
     "storage",
-    "scripting",
-    "activeTab",
     "identity"
   ],
   "host_permissions": [
@@ -14,8 +12,7 @@
     "https://www.googleapis.com/*"
   ],
   "background": {
-    "service_worker": "background.js",
-    "type": "module"
+    "service_worker": "background.js"
   },
   "action": {
     "default_popup": "popup.html",

@@ -1,4 +1,10 @@
 const STORAGE_KEY = "ytPlaylists";
+const ENABLED_KEY = "ytButtonsEnabled"; // global on/off switch from the popup (default: on)
+
+function applyButtonsEnabled(enabled) {
+  document.documentElement.classList.toggle("yt-pl-buttons-off", enabled === false);
+}
+chrome.storage.sync.get([ENABLED_KEY], (data) => applyButtonsEnabled(data[ENABLED_KEY]));
 
 /** ===== Shared helpers ===== **/
 function getVideoIdFromAnchor(anchor) {
@@ -23,7 +29,7 @@ function getCurrentWatchVideoId() {
   }
 }
 
-function showToast(message) {
+function showToast(message, { error = false } = {}) {
   try {
     let toast = document.querySelector(".yt-pl-toast");
     if (!toast) {
@@ -32,9 +38,10 @@ function showToast(message) {
       document.documentElement.appendChild(toast);
     }
     toast.textContent = message;
+    toast.classList.toggle("error", error);
     toast.classList.add("show");
     clearTimeout(showToast._t);
-    showToast._t = setTimeout(() => toast.classList.remove("show"), 1800);
+    showToast._t = setTimeout(() => toast.classList.remove("show"), error ? 5000 : 1800);
   } catch {}
 }
 
@@ -49,79 +56,121 @@ function normalizeItems(items) {
     .filter((x) => x.playlistId.length > 0);
 }
 
-async function getPlaylistButtons() {
-  return new Promise((resolve) => {
-    chrome.storage.sync.get([STORAGE_KEY], (data) => resolve(normalizeItems(data[STORAGE_KEY])));
+// Cached button config: one storage read instead of one per title element.
+let cachedButtonsPromise = null;
+function getPlaylistButtons() {
+  if (!cachedButtonsPromise) {
+    cachedButtonsPromise = new Promise((resolve) => {
+      chrome.storage.sync.get([STORAGE_KEY], (data) => resolve(normalizeItems(data[STORAGE_KEY])));
+    });
+  }
+  return cachedButtonsPromise;
+}
+
+// When the popup saves, drop the cache and rebuild every injected bar.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== "sync") return;
+  if (changes[ENABLED_KEY]) applyButtonsEnabled(changes[ENABLED_KEY].newValue);
+  if (!changes[STORAGE_KEY]) return;
+  cachedButtonsPromise = Promise.resolve(normalizeItems(changes[STORAGE_KEY].newValue));
+  document.querySelectorAll(".yt-playlist-button-bar").forEach((bar) => bar.remove());
+  document.querySelectorAll("[data-yt-playlist-button-injected]").forEach((el) => {
+    delete el.dataset.ytPlaylistButtonInjected;
   });
+  processVideos();
+});
+
+/** ===== Add-to-playlist buttons ===== **/
+// Overlaid on every video thumbnail (home, subscriptions, search, channel, watch sidebar,
+// playlists, shorts shelves...). Two thumbnail generations exist on YouTube today:
+//   - ytd-thumbnail           (classic renderers; contains a#thumbnail)
+//   - yt-thumbnail-view-model (new "lockup" and shorts renderers)
+const THUMBNAIL_SELECTOR = "ytd-thumbnail, yt-thumbnail-view-model";
+
+// The video being watched has no thumbnail, so it keeps a bar above its title.
+const WATCH_TITLE_SELECTOR = "ytd-watch-metadata #title";
+
+function findVideoIdForThumbnail(host) {
+  const anchor = host.closest("a[href]") || host.querySelector("a[href]");
+  const fromAnchor = getVideoIdFromAnchor(anchor);
+  if (fromAnchor) return fromAnchor;
+
+  // New lockups expose the id as a class (their link may be an ad redirect)
+  const withId = host.closest('[class*="content-id-"]');
+  const m = withId && withId.className.match(/content-id-([\w-]{11})/);
+  return m ? m[1] : null;
 }
 
-/** ===== Add-to-playlist buttons above titles (home/subs/search/watch etc.) ===== **/
-const TITLE_SELECTORS = [
-  "a#video-title",
-  "a.yt-lockup-metadata-view-model__title",
-  "div#title"
-];
-
-function findVideoIdForTitle(el) {
-  if (el.tagName && el.tagName.toLowerCase() === "a") {
-    const fromSelf = getVideoIdFromAnchor(el);
-    if (fromSelf) return fromSelf;
-  }
-
-  const anchor =
-    el.closest("a#video-title, a#video-title-link") ||
-    el.querySelector?.("a#video-title, a#video-title-link");
-
-  if (anchor) {
-    const fromAnchor = getVideoIdFromAnchor(anchor);
-    if (fromAnchor) return fromAnchor;
-  }
-
-  if (location.pathname.startsWith("/watch")) return getCurrentWatchVideoId();
-  return null;
+// Black or white label, whichever reads better on the button's colour.
+function readableTextColor(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex || "");
+  if (!m) return "#0f0f0f";
+  const n = parseInt(m[1], 16);
+  const lin = (c) => {
+    c /= 255;
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  };
+  const L = 0.2126 * lin((n >> 16) & 255) + 0.7152 * lin((n >> 8) & 255) + 0.0722 * lin(n & 255);
+  return L > 0.4 ? "#0f0f0f" : "#ffffff";
 }
 
-async function addButtonsAboveTitle(titleElement) {
-  // NOTE: YouTube is a SPA and reuses DOM nodes on search/navigation.
-  // Do NOT capture videoId at injection time; compute it at click time.
-  if (titleElement.dataset.ytPlaylistButtonInjected === "true") return;
+function flashState(btn, state) {
+  btn.classList.remove("is-busy", "is-done", "is-error");
+  if (!state) return;
+  btn.classList.add(state);
+  clearTimeout(btn._stateTimer);
+  if (state !== "is-busy") btn._stateTimer = setTimeout(() => btn.classList.remove(state), 1600);
+}
 
-  titleElement.dataset.ytPlaylistButtonInjected = "true";
-
-  const items = await getPlaylistButtons();
-  if (!items.length) return;
-
+function buildButtonBar(items, resolveVideoId, extraClass) {
   const bar = document.createElement("div");
-  bar.className = "yt-playlist-button-bar";
+  bar.className = "yt-playlist-button-bar" + (extraClass ? " " + extraClass : "");
+
+  // Thumbnails are links / hover-preview triggers: keep our clicks to ourselves.
+  for (const type of ["click", "mousedown", "mouseup", "pointerdown", "pointerup", "touchstart"]) {
+    bar.addEventListener(type, (e) => {
+      e.stopPropagation();
+      if (type === "click") e.preventDefault();
+    });
+  }
 
   items.forEach((item) => {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "yt-playlist-button";
     btn.textContent = item.text || "★";
+    btn.title = `Add to '${item.text}'`;
     btn.style.background = item.color || "#ffffff";
+    btn.style.setProperty("--yt-pl-fg", readableTextColor(item.color));
 
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
       e.preventDefault();
+      if (btn.classList.contains("is-busy")) return; // ignore double clicks
 
-      // Re-resolve the videoId right now (fixes stale ids after search results change)
-      const videoId = findVideoIdForTitle(titleElement);
+      // Re-resolve the videoId right now: YouTube recycles DOM nodes on navigation.
+      const videoId = resolveVideoId();
       if (!videoId) {
-        alert("Could not determine video ID for this item.");
+        showToast("Could not determine the video ID for this item.", { error: true });
         return;
       }
 
+      flashState(btn, "is-busy");
       chrome.runtime.sendMessage(
         { type: "ADD_TO_PLAYLIST", videoId, playlistId: item.playlistId },
         (response) => {
-          if (!response) {
-            alert("Add to playlist failed: no response from background script.");
-            return;
-          }
-          if (!response.success) {
-            alert("Add to playlist failed:\n" + response.error);
+          if (chrome.runtime.lastError || !response) {
+            flashState(btn, "is-error");
+            showToast("Add to playlist failed: no response from the extension.", { error: true });
+          } else if (!response.success) {
+            flashState(btn, "is-error");
+            console.error("Add to playlist failed:", response.error);
+            showToast("Add to playlist failed: " + response.error, { error: true });
+          } else if (response.alreadyInPlaylist) {
+            flashState(btn, "is-done");
+            showToast(`Already in '${item.text}'`);
           } else {
+            flashState(btn, "is-done");
             showToast(`Video added to '${item.text}'`);
           }
         }
@@ -131,22 +180,31 @@ async function addButtonsAboveTitle(titleElement) {
     bar.appendChild(btn);
   });
 
-  const parent = titleElement.parentNode;
-  if (!parent) return;
-  parent.insertBefore(bar, titleElement);
+  return bar;
 }
 
-function processTitles() {
-  const seen = new Set();
-  TITLE_SELECTORS.forEach((sel) => {
-    document.querySelectorAll(sel).forEach((el) => {
-      if (seen.has(el)) return;
-      seen.add(el);
-      addButtonsAboveTitle(el);
-    });
-  });
+async function addButtonsToThumbnail(host) {
+  if (host.dataset.ytPlaylistButtonInjected === "true") return;
+  host.dataset.ytPlaylistButtonInjected = "true";
+
+  const items = await getPlaylistButtons();
+  if (!items.length) return;
+  host.appendChild(buildButtonBar(items, () => findVideoIdForThumbnail(host), "yt-pl-thumb-bar"));
 }
 
+async function addButtonsAboveWatchTitle(titleElement) {
+  if (titleElement.dataset.ytPlaylistButtonInjected === "true") return;
+  titleElement.dataset.ytPlaylistButtonInjected = "true";
+
+  const items = await getPlaylistButtons();
+  if (!items.length || !titleElement.parentNode) return;
+  titleElement.parentNode.insertBefore(buildButtonBar(items, getCurrentWatchVideoId), titleElement);
+}
+
+function processVideos() {
+  document.querySelectorAll(THUMBNAIL_SELECTOR).forEach(addButtonsToThumbnail);
+  document.querySelectorAll(WATCH_TITLE_SELECTOR).forEach(addButtonsAboveWatchTitle);
+}
 
 /** ===== Playlist page shortcut: click 3-dots + Remove from playlist ===== **/
 function isPlaylistPage() {
@@ -180,22 +238,25 @@ function findMenuButtonInPlaylistRow(rowEl) {
   );
 }
 
+function looksLikeRemove(text) {
+  const txt = (text || "").toString().trim().toLowerCase();
+  // English + Portuguese friendly matching
+  return (
+    (txt.includes("remove") && (txt.includes("playlist") || txt.includes("play list") || txt.startsWith("remove from"))) ||
+    (txt.includes("remover") && (txt.includes("playlist") || txt.includes("lista")))
+  );
+}
+
 function findRemoveMenuItem() {
-  // Search in currently opened popup menu
-  const items = Array.from(document.querySelectorAll('ytd-menu-service-item-renderer, tp-yt-paper-item'));
-  const normalize = (s) => (s || "").toString().trim().toLowerCase();
-
-  for (const it of items) {
-    const txt = normalize(it.textContent);
-    // English + Portuguese friendly matching
-    const looksLikeRemove =
-      (txt.includes("remove") && txt.includes("playlist")) ||
-      (txt.includes("remove") && txt.includes("play list")) ||
-      (txt.includes("remover") && (txt.includes("playlist") || txt.includes("da playlist") || txt.includes("da lista")));
-
-    if (looksLikeRemove) return it;
+  // Only search inside the currently opened popup menu, not the whole page
+  const candidates = document.querySelectorAll(
+    "ytd-popup-container ytd-menu-service-item-renderer, ytd-popup-container tp-yt-paper-item, ytd-popup-container span"
+  );
+  for (const el of candidates) {
+    if (el.offsetParent !== null && looksLikeRemove(el.textContent)) return el;
   }
-  return null;
+  // Fallback: previous behaviour (English only, any span on the page)
+  return [...document.querySelectorAll("span")].find((s) => s.textContent.includes("Remove from ")) || null;
 }
 
 function clickRemoveFromPlaylistViaMenu(rowEl) {
@@ -209,8 +270,7 @@ function clickRemoveFromPlaylistViaMenu(rowEl) {
   let tries = 0;
   const maxTries = 30; // ~1.5s at 50ms
   const timer = setInterval(() => {
-    const removeItem = [...document.querySelectorAll('span')].find(s => s.textContent.includes('Remove from '));
-    
+    const removeItem = findRemoveMenuItem();
     tries++;
     if (removeItem) {
       clearInterval(timer);
@@ -246,7 +306,7 @@ function addRemoveShortcutButtonToPlaylistRow(rowEl) {
   });
 
   // Insert to the LEFT of the 3-dots menu button
-    menuBtn.parentElement.insertAdjacentElement("beforebegin", btn);
+  menuBtn.parentElement.insertAdjacentElement("beforebegin", btn);
 }
 
 function processPlaylistRows() {
@@ -257,10 +317,16 @@ function processPlaylistRows() {
 }
 
 
+// YouTube mutates the DOM constantly; coalesce bursts into one pass per animation frame.
+let scanScheduled = false;
 const observer = new MutationObserver(() => {
-  processTitles();
-  processPlaylistRows();
-  processPlaylistRows();
+  if (scanScheduled) return;
+  scanScheduled = true;
+  requestAnimationFrame(() => {
+    scanScheduled = false;
+    processVideos();
+    processPlaylistRows();
+  });
 });
 
 observer.observe(document.documentElement, {
@@ -268,4 +334,5 @@ observer.observe(document.documentElement, {
   subtree: true
 });
 
-processTitles();
+processVideos();
+processPlaylistRows();

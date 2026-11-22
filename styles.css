@@ -6,21 +6,61 @@
 }
 
 .yt-playlist-button {
+  --yt-pl-fg: #0f0f0f;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 1px 6px;
-  font-size: 11px;
-  line-height: 16px;
-  font-weight: 700;
-  border-radius: 6px;
-  border: 1px solid rgba(0,0,0,0.25);
-  color: #000;
+  gap: 4px;
+  height: 22px;
+  padding: 0 10px;
+  font-family: "Roboto", "Arial", sans-serif;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--yt-pl-fg);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 999px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.25);
   cursor: pointer;
   user-select: none;
+  transition: transform 120ms ease, box-shadow 120ms ease, filter 120ms ease, opacity 120ms ease;
+}
+.yt-playlist-button:hover {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+}
+.yt-playlist-button:active { transform: scale(0.95); }
+.yt-playlist-button:focus-visible { outline: 2px solid #3ea6ff; outline-offset: 1px; }
+
+/* Request states */
+.yt-playlist-button.is-busy { opacity: 0.7; cursor: progress; animation: yt-pl-pulse 900ms ease-in-out infinite; }
+.yt-playlist-button.is-done::before { content: "\2713"; font-weight: 700; }
+.yt-playlist-button.is-error::before { content: "!"; font-weight: 700; }
+@keyframes yt-pl-pulse { 50% { opacity: 0.45; } }
+
+/* Overlay on thumbnails: pinned to the bottom-left corner, flowing right
+   (the duration badge sits bottom-right, so leave room for it). */
+.yt-playlist-button-bar.yt-pl-thumb-bar {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  right: 64px;
+  z-index: 5;
+  margin: 0;
+  gap: 5px;
+  align-items: flex-end;
+  pointer-events: none; /* only the buttons themselves catch the mouse */
+}
+.yt-pl-thumb-bar .yt-playlist-button {
+  pointer-events: auto;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.25);
 }
 
-.yt-playlist-button:hover { filter: brightness(0.95); }
+/* Global on/off switch from the popup */
+html.yt-pl-buttons-off .yt-playlist-button-bar { display: none !important; }
 
 /* Toast */
 .yt-pl-toast {
@@ -41,6 +81,7 @@
   transition: opacity 120ms ease-in;
 }
 .yt-pl-toast.show { opacity: 1; }
+.yt-pl-toast.error { background: rgba(160,30,30,0.95); }
 
 .yt-pl-remove-shortcut-btn {
   background-color: #ffffff00;
@@ -48,26 +89,3 @@
   border: 0;
   fill: #f1f1f1
 }
-
-
-/* Playlist page: shortcut remove button (opens 3-dots menu and clicks Remove) */
-/*.yt-pl-remove-shortcut-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  margin-right: 6px;
-  border-radius: 30px;
-  border: 1px solid rgba(241,241,241,0.5);
-  background: rgba(247, 100, 100, 0.5);
-  cursor: pointer;
-}
-.yt-pl-remove-shortcut-btn:hover { background: rgba(255, 0, 0, 0.5); }
-
-.yt-pl-remove-shortcut-btn svg {
-  width: 16px;
-  height: 16px;
-  fill: currentColor;
-  color: var(--yt-spec-text-primary, #fff);
-}*/
