@@ -6,6 +6,10 @@
 
 <p align="center">One-click buttons on YouTube thumbnails that add videos to your playlists.</p>
 
+<p align="center">
+  <a href="https://chromewebstore.google.com/detail/playlist-buttons-for-yout/abkipmhmjcdmoeofpmmomcpfaljnihao"><strong>Install from the Chrome Web Store</strong></a>
+</p>
+
 ---
 
 A Chrome extension (Manifest V3) that puts small, colorful buttons on every YouTube video thumbnail. Each button is linked to one of your playlists: click it and the video is added through the official YouTube Data API. No menus, no "Save to playlist" dialog.
@@ -19,6 +23,10 @@ A Chrome extension (Manifest V3) that puts small, colorful buttons on every YouT
 - **Auto-save settings** that apply right away to open YouTube tabs and sync across your Chrome browsers.
 - **On/off switch** to hide all buttons without losing your setup.
 - **Trash shortcut** on your playlist pages to remove a video in one click (English and Portuguese YouTube).
+
+## Installation
+
+Install it from the [Chrome Web Store](https://chromewebstore.google.com/detail/playlist-buttons-for-yout/abkipmhmjcdmoeofpmmomcpfaljnihao), then pin it to the toolbar from Chrome's extensions menu (puzzle icon).
 
 ## Usage
 
